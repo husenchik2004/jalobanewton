@@ -10,6 +10,11 @@ from aiogram.types import (
     ReplyKeyboardMarkup, KeyboardButton
 )
 from datetime import datetime
+from datetime import datetime, timedelta
+
+def uz_time():
+    return datetime.utcnow() + timedelta(hours=5)
+
 import re
 
 router = Router()
@@ -86,7 +91,7 @@ def generate_pretty_id(gs_client: GoogleSheetsClient) -> str:
         return f"A-{last_num + 1}"
     except Exception as e:
         print(f"⚠️ generate_pretty_id error: {e}")
-        return f"A-{datetime.now().strftime('%y%m%d%H%M%S')}"
+        return f"A-{uz_time().strftime('%y%m%d%H%M%S')}"
 
 
 # ==========================
@@ -101,7 +106,7 @@ async def show_complaint_preview(message: types.Message, state: FSMContext):
         complaint_id = generate_pretty_id(gs_client)
     except Exception:
         # fallback
-        complaint_id = f"A-{datetime.now().strftime('%y%m%d%H%M%S')}"
+        complaint_id = f"A-{uz_time().strftime('%y%m%d%H%M%S')}"
 
     await state.update_data(id=complaint_id)
 
@@ -462,8 +467,9 @@ async def confirm_send(callback: types.CallbackQuery, state: FSMContext):
         return
 
     await state.update_data(sending_in_progress=True)
-    complaint_id = data.get("id") or f"A-{datetime.now().strftime('%y%m%d%H%M%S')}"
-    date_str = datetime.now().strftime("%d.%m.%Y %H:%M")
+    complaint_id = data.get("id") or f"A-{uz_time().strftime('%y%m%d%H%M%S')}"
+    date_str = uz_time().strftime("%d.%m.%Y %H:%M")
+
 
     branch = data.get("branch", "-")
     parent = data.get("parent", "-")
@@ -544,7 +550,8 @@ async def called_handler(callback: types.CallbackQuery):
         pass
 
     cid = callback.data.split(":", 1)[1]
-    now = datetime.now().strftime("%d.%m.%Y %H:%M")
+    now = uz_time().strftime("%d.%m.%Y %H:%M")
+
 
     # защита от двойного нажатия
     if not hasattr(callback.bot, "_called_ids"):
@@ -684,7 +691,8 @@ async def receive_solution(message: types.Message, state: FSMContext):
         await message.answer("❌ Решение слишком короткое, напишите подробнее.")
         return
 
-    now = datetime.now().strftime("%d.%m.%Y %H:%M")
+    now = uz_time().strftime("%d.%m.%Y %H:%M")
+
     responsible_name = message.from_user.full_name or "Без имени"
     username = f"@{message.from_user.username}" if message.from_user.username else ""
     responsible_display = f"{responsible_name} {username}".strip()
@@ -768,7 +776,8 @@ async def receive_solution(message: types.Message, state: FSMContext):
 @router.callback_query(F.data.startswith("notify_parent:"))
 async def notify_parent(callback: types.CallbackQuery):
     cid = callback.data.split(":")[1]
-    now = datetime.now().strftime("%d.%m.%Y %H:%M")
+    now = uz_time().strftime("%d.%м.%Y %H:%M")
+
     user_name = callback.from_user.full_name or "Без имени"
     username = f"@{callback.from_user.username}" if callback.from_user.username else ""
     display_name = f"{user_name} {username}".strip()

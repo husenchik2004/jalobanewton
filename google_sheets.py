@@ -2,8 +2,6 @@ import gspread
 import pandas as pd
 from google.oauth2.service_account import Credentials
 from datetime import datetime
-
-
 class GoogleSheetsClient:
     def __init__(self, service_file: str, sheet_id: str):
         """Подключение к Google Sheets"""
