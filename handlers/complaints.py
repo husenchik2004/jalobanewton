@@ -674,9 +674,6 @@ async def add_solution(callback: types.CallbackQuery, state: FSMContext = None):
         await callback.answer()
     except:
         pass
-# ==========================
-# Обработка текста решения — отправка в РЕШЕНИЯ и ЖАЛОБЫ
-# ==========================
 from aiogram.fsm.context import FSMContext
 from aiogram.utils.exceptions import TelegramBadRequest, MessageNotModified
 import traceback
