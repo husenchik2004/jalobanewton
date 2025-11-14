@@ -682,7 +682,6 @@ async def receive_solution(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
     bot = message.bot
 
-    # Проверяем, что мы действительно ожидали решение от этого юзера
     if user_id not in bot.solution_waiting:
         return
 
@@ -692,28 +691,19 @@ async def receive_solution(message: types.Message, state: FSMContext):
         await message.answer("❌ Решение слишком короткое, напишите подробнее.")
         return
 
-    # Время
-    try:
-        now = uz_time().strftime("%d.%m.%Y %H:%M")
-    except:
-        from datetime import datetime
-        now = datetime.now().strftime("%d.%m.%Y %H:%M")
+    now = uz_time().strftime("%d.%m.%Y %H:%M")
 
-    # Ответственный
     responsible_name = message.from_user.full_name or "Без имени"
     username = f"@{message.from_user.username}" if message.from_user.username else ""
     responsible_display = f"{responsible_name} {username}".strip()
 
-    # ===============================
-    # Получаем жалобу из Google Sheets
-    # ===============================
+    # === Обновляем данные в Google Sheets ===
     gs = GoogleSheetsClient(bot.config["SERVICE_ACCOUNT_FILE"], bot.config["GOOGLE_SHEET_ID"])
     row_index, complaint = gs.get_row_by_id(cid)
-
     if not complaint:
         await message.answer(f"⚠️ Жалоба с ID {cid} не найдена в таблице.")
-        bot.solution_waiting.pop(user_id, None)
         bot.solution_locks[user_id] = False
+        bot.solution_waiting.pop(user_id, None)
         return
 
     gs.update_by_id(cid, {
@@ -723,12 +713,11 @@ async def receive_solution(message: types.Message, state: FSMContext):
         "Статус": "Ожидает уведомления"
     })
 
+    # Берём время обзвона, если есть
     call_time = complaint.get("Время обзвона", "—")
 
-    # ===============================
-    # Формируем новое сообщение
-    # ===============================
-    updated_text = (
+    # === Сообщение в группу РЕШЕНИЯ (без кнопки, оформлено красиво) ===
+    msg_text_full = (
         f"📤 <b>Жалоба ID {cid}</b> передана в <b>«РЕШЕНИЯ»</b>\n\n"
         f"📋 <b>Новая жалоба</b>\n\n"
         f"🏫 <b>Филиал:</b> {complaint.get('Филиал', '-')}\n"
@@ -746,56 +735,38 @@ async def receive_solution(message: types.Message, state: FSMContext):
         f"✅ Жалоба передана обратно в группу обзвона для уведомления родителя."
     )
 
-    # ===============================
-    # Удаляем старое сообщение ПОЛНОСТЬЮ
-    # ===============================
-    old_msg = bot.solution_messages.get(cid) if hasattr(bot, "solution_messages") else None
+    group_solutions = bot.config["GROUP_SOLUTIONS_ID"]
 
-    if old_msg:
+    # Удаляем старое сообщение, если оно было
+    if hasattr(bot, "solution_messages") and cid in bot.solution_messages:
+        old_msg = bot.solution_messages[cid]
         try:
             await bot.delete_message(old_msg["chat_id"], old_msg["message_id"])
         except Exception:
-            pass  # если уже удалено — ок
+            pass
 
-    # ===============================
-    # Отправляем новое сообщение
-    # ===============================
-    group_solutions = bot.config["GROUP_SOLUTIONS_ID"]
-    sent_msg = await bot.send_message(group_solutions, updated_text, parse_mode="HTML")
+    sent_msg = await bot.send_message(group_solutions, msg_text_full, parse_mode="HTML")
+    bot.solution_messages[cid] = {"chat_id": group_solutions, "message_id": sent_msg.message_id}
 
-    if not hasattr(bot, "solution_messages"):
-        bot.solution_messages = {}
-    bot.solution_messages[cid] = {"chat_id": sent_msg.chat.id, "message_id": sent_msg.message_id}
-
-    # ===============================
-    # Сообщение в группу ЖАЛОБЫ
-    # ===============================
-    short_text = (
+    # === Сообщение в группу ЖАЛОБЫ (с кнопкой и коротко) ===
+    msg_text_short = (
         f"📋 <b>Жалоба ID {cid}</b>\n"
         f"💬 <b>Решение:</b> {solution_text}\n"
         f"👤 <b>Ответственный:</b> {responsible_display}\n"
         f"🕒 <b>Время решения:</b> {now}\n\n"
-        f"☎️ Необходимо сообщить родителю о решении."
+        f"☎️ Необходимо сообщить родителю о решении жалобы."
     )
 
     notify_button = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📨 Сообщили родителю о решении!", callback_data=f"notify_parent:{cid}")]
     ])
-
+    
     group_complaints = bot.config["GROUP_COMPLAINTS_ID"]
-    sent_short = await bot.send_message(group_complaints, short_text, parse_mode="HTML", reply_markup=notify_button)
+    sent_complaint = await bot.send_message(group_complaints, msg_text_short, parse_mode="HTML", reply_markup=notify_button)
 
     if not hasattr(bot, "notify_messages"):
         bot.notify_messages = {}
-    bot.notify_messages[cid] = {"chat_id": sent_short.chat.id, "message_id": sent_short.message_id}
-
-    # ------------------------
-    # ОЧИСТКА БЛОКИРОВОК
-    # ------------------------
-    bot.solution_waiting.pop(user_id, None)
-    bot.solution_locks[user_id] = False
-
-    await message.answer("✅ Решение добавлено.")
+    bot.notify_messages[cid] = {"chat_id": group_complaints, "message_id": sent_complaint.message_id}
 
 
 # ==========================
