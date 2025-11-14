@@ -776,7 +776,7 @@ async def receive_solution(message: types.Message, state: FSMContext):
 @router.callback_query(F.data.startswith("notify_parent:"))
 async def notify_parent(callback: types.CallbackQuery):
     cid = callback.data.split(":")[1]
-    now = uz_time().strftime("%d.%м.%Y %H:%M")
+    now = uz_time().strftime("%d.%m.%Y %H:%M")
 
     user_name = callback.from_user.full_name or "Без имени"
     username = f"@{callback.from_user.username}" if callback.from_user.username else ""
