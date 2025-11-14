@@ -737,16 +737,19 @@ async def receive_solution(message: types.Message, state: FSMContext):
 
         group_solutions = bot.config["GROUP_SOLUTIONS_ID"]
 
-        # Удаляем старое сообщение, если есть
-        if hasattr(bot, "solution_messages") and cid in bot.solution_messages:
-            old_msg = bot.solution_messages[cid]
-            try:
-                await bot.delete_message(old_msg["chat_id"], old_msg["message_id"])
-            except:
-                pass
+        # ==== ПЫТАЕМСЯ УДАЛИТЬ ПРЕДЫДУЩЕЕ СООБЩЕНИЕ ====
+        if cid in bot.solution_messages:
+            old_chat = bot.solution_messages[cid]["chat_id"]
+            old_msg_id = bot.solution_messages[cid]["message_id"]
 
-        sent_msg = await bot.send_message(group_solutions, msg_text_full, parse_mode="HTML")
-        bot.solution_messages[cid] = {"chat_id": group_solutions, "message_id": sent_msg.message_id}
+            try:
+                await bot.delete_message(old_chat, old_msg_id)
+            except Exception as e:
+                print(f"⚠️ Не удалось удалить старое сообщение: {e}")
+
+            # Всегда чистим, чтобы не хранить мусор
+            bot.solution_messages.pop(cid, None)
+
 
         # === Сообщение в группу ЖАЛОБЫ ===
         msg_text_short = (
