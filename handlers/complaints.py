@@ -677,13 +677,18 @@ async def add_solution(callback: types.CallbackQuery, state: FSMContext = None):
 # ==========================
 # Обработка текста решения — отправка в РЕШЕНИЯ и ЖАЛОБЫ
 # ==========================
+from aiogram.utils.exceptions import TelegramBadRequest, MessageNotModified
+import traceback
+
 @router.message(F.text)
 async def receive_solution(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
     bot = message.bot
 
-    # Проверяем что бот ждет текст решения
-    if user_id not in bot.solution_waiting:
+    # --------------------
+    # защита: действительно ли ждем решение от этого пользователя?
+    # --------------------
+    if user_id not in getattr(bot, "solution_waiting", {}):
         return
 
     cid = bot.solution_waiting[user_id]["cid"]
@@ -692,96 +697,172 @@ async def receive_solution(message: types.Message, state: FSMContext):
         await message.answer("❌ Решение слишком короткое, напишите подробнее.")
         return
 
-    now = uz_time().strftime("%d.%m.%Y %H:%M")
+    # Время в вашем часовом поясе (предполагаю, что uz_time() у вас есть)
+    try:
+        now = uz_time().strftime("%d.%m.%Y %H:%M")
+    except Exception:
+        from datetime import datetime
+        now = datetime.now().strftime("%d.%m.%Y %H:%M")
 
     responsible_name = message.from_user.full_name or "Без имени"
     username = f"@{message.from_user.username}" if message.from_user.username else ""
     responsible_display = f"{responsible_name} {username}".strip()
 
-    # === Обновляем в Google Sheets ===
-    gs = GoogleSheetsClient(bot.config["SERVICE_ACCOUNT_FILE"], bot.config["GOOGLE_SHEET_ID"])
-    row_index, complaint = gs.get_row_by_id(cid)
+    # =========================
+    # Обновляем Google Sheets
+    # =========================
+    try:
+        gs = GoogleSheetsClient(bot.config["SERVICE_ACCOUNT_FILE"], bot.config["GOOGLE_SHEET_ID"])
+        row_index, complaint = gs.get_row_by_id(cid)
+    except Exception as e:
+        await message.answer(f"⚠️ Ошибка при доступе к таблице: {e}")
+        bot.solution_waiting.pop(user_id, None)
+        bot.solution_locks[user_id] = False
+        return
+
     if not complaint:
         await message.answer(f"⚠️ Жалоба с ID {cid} не найдена в таблице.")
         bot.solution_waiting.pop(user_id, None)
         bot.solution_locks[user_id] = False
         return
 
-    gs.update_by_id(cid, {
-        "Решение": solution_text,
-        "Ответственный": responsible_display,
-        "Время решения": now,
-        "Статус": "Ожидает уведомления"
-    })
+    try:
+        gs.update_by_id(cid, {
+            "Решение": solution_text,
+            "Ответственный": responsible_display,
+            "Время решения": now,
+            "Статус": "Ожидает уведомления"
+        })
+    except Exception as e:
+        await message.answer(f"⚠️ Не удалось обновить таблицу: {e}")
+        bot.solution_waiting.pop(user_id, None)
+        bot.solution_locks[user_id] = False
+        return
 
     call_time = complaint.get("Время обзвона", "—")
 
-    # === Готовим обновлённый текст (который заменит старое сообщение) ===
+    # =========================
+    # Сформируем обновлённый текст (тот, который должен быть в сообщении)
+    # =========================
     updated_text = (
-        f"📤 Жалоба ID {cid} передана в «РЕШЕНИЯ».\n\n"
-        f"📋 Новая жалоба\n"
-        f"ID: {cid}\n\n"
-        f"🏫 Филиал: {complaint.get('Филиал', '-')}\n"
-        f"👩‍👦 Родитель: {complaint.get('Родитель', '-')}\n"
-        f"🧒 Ученик: {complaint.get('Ученик', '-')}\n"
-        f"☎️ Телефон: {complaint.get('Телефон', '-')}\n"
-        f"📂 Категория: {complaint.get('Категория', '-')}\n"
-        f"✍️ Жалоба: {complaint.get('Жалоба', '-')}\n\n"
-        f"👤 Отправитель: {complaint.get('Отправитель', '-')}\n"
+        f"📤 <b>Жалоба ID {cid}</b> передана в <b>«РЕШЕНИЯ»</b>\n\n"
+        f"📋 <b>Новая жалоба</b>\n\n"
+        f"🏫 <b>Филиал:</b> {complaint.get('Филиал', '-')}\n"
+        f"👩‍👦 <b>Родитель:</b> {complaint.get('Родитель', '-')}\n"
+        f"🧒 <b>Ученик:</b> {complaint.get('Ученик', '-')}\n"
+        f"☎️ <b>Телефон:</b> {complaint.get('Телефон', '-')}\n"
+        f"📂 <b>Категория:</b> {complaint.get('Категория', '-')}\n"
+        f"✍️ <b>Жалоба:</b> {complaint.get('Жалоба', '-')}\n\n"
+        f"👤 <b>Отправитель:</b> {complaint.get('Отправитель', '-')}\n"
         f"🆔 {complaint.get('User ID', '-')}\n"
-        f"☎️ Перезвонили: {call_time}\n\n"
-        f"💬 Решение: {solution_text}\n"
-        f"👤 Ответственный: {responsible_display}\n"
-        f"🕒 Время решения: {now}\n\n"
+        f"☎️ <b>Перезвонили:</b> {call_time}\n\n"
+        f"💬 <b>Решение:</b> {solution_text}\n"
+        f"👤 <b>Ответственный:</b> {responsible_display}\n"
+        f"🕒 <b>Время решения:</b> {now}\n\n"
         f"✅ Жалоба передана обратно в группу обзвона для уведомления родителя."
     )
 
-    # === ИЩЕМ СТАРОЕ сообщение и обновляем его ===
-    old_msg = bot.solution_messages.get(cid)
+    # =========================
+    # Попытка обновить старое сообщение (preferred)
+    # =========================
+    old_msg = None
+    try:
+        old_msg = bot.solution_messages.get(cid) if hasattr(bot, "solution_messages") else None
+    except Exception:
+        old_msg = None
+
+    did_edit = False
     if old_msg:
         try:
-            # если caption — обновляем caption
+            # Попытка: edit caption (если было медиа с подписью)
             await bot.edit_message_caption(
                 chat_id=old_msg["chat_id"],
                 message_id=old_msg["message_id"],
                 caption=updated_text,
                 parse_mode="HTML"
             )
-        except:
-            # если не photo и не video — редактируем текст
-            await bot.edit_message_text(
-                chat_id=old_msg["chat_id"],
-                message_id=old_msg["message_id"],
-                text=updated_text,
-                parse_mode="HTML"
-            )
+            did_edit = True
+        except MessageNotModified:
+            # если текст не поменялся — OK
+            did_edit = True
+        except TelegramBadRequest as e:
+            # попробуем редактировать текст если caption не применим
+            try:
+                await bot.edit_message_text(
+                    chat_id=old_msg["chat_id"],
+                    message_id=old_msg["message_id"],
+                    text=updated_text,
+                    parse_mode="HTML"
+                )
+                did_edit = True
+            except MessageNotModified:
+                did_edit = True
+            except Exception as e2:
+                # логируем причину
+                print("edit_message_text fail:", e2)
+                traceback.print_exc()
 
-    # === Отправляем короткое уведомление в группу ЖАЛОБЫ ===
-    group_complaints = bot.config["GROUP_COMPLAINTS_ID"]
-    notify_button = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📨 Сообщили родителю о решении!", callback_data=f"notify_parent:{cid}")]
-    ])
+        except Exception as e:
+            print("edit_message_caption fail:", e)
+            traceback.print_exc()
 
-    short_msg = (
-        f"📋 Жалоба ID {cid}\n"
-        f"💬 Решение: {solution_text}\n"
-        f"👤 Ответственный: {responsible_display}\n"
-        f"🕒 Время решения: {now}\n\n"
-        f"☎️ Необходимо сообщить родителю о решении."
-    )
+    # =========================
+    # Если обновить не удалось — удалим старое (если есть) и отправим новое
+    # =========================
+    if not did_edit:
+        try:
+            if old_msg:
+                try:
+                    await bot.delete_message(old_msg["chat_id"], old_msg["message_id"])
+                except Exception as e:
+                    print("Не удалось удалить старое сообщение (возможно уже удалено):", e)
 
-    sent_short = await bot.send_message(group_complaints, short_msg, parse_mode="HTML", reply_markup=notify_button)
+            # Отправляем новое сообщение (в группу РЕШЕНИЯ)
+            group_solutions = bot.config["GROUP_SOLUTIONS_ID"]
+            sent_msg = await bot.send_message(group_solutions, updated_text, parse_mode="HTML")
+            # Сохраняем новый id в mapping
+            if not hasattr(bot, "solution_messages"):
+                bot.solution_messages = {}
+            bot.solution_messages[cid] = {"chat_id": sent_msg.chat.id, "message_id": sent_msg.message_id}
+        except Exception as e:
+            await message.answer(f"⚠️ Ошибка при отправке/замене сообщения в группе РЕШЕНИЯ: {e}")
+            traceback.print_exc()
 
-    if not hasattr(bot, "notify_messages"):
-        bot.notify_messages = {}
-    bot.notify_messages[cid] = {
-        "chat_id": group_complaints,
-        "message_id": sent_short.message_id
-    }
+    # =========================
+    # Отправляем короткое сообщение в группу ЖАЛОБЫ с кнопкой "Сообщили родителю"
+    # =========================
+    try:
+        group_complaints = bot.config["GROUP_COMPLAINTS_ID"]
+        notify_button = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📨 Сообщили родителю о решении!", callback_data=f"notify_parent:{cid}")]
+        ])
+        short_msg = (
+            f"📋 <b>Жалоба ID {cid}</b>\n"
+            f"💬 <b>Решение:</b> {solution_text}\n"
+            f"👤 <b>Ответственный:</b> {responsible_display}\n"
+            f"🕒 <b>Время решения:</b> {now}\n\n"
+            f"☎️ Необходимо сообщить родителю о решении."
+        )
+        sent_short = await bot.send_message(group_complaints, short_msg, parse_mode="HTML", reply_markup=notify_button)
 
-    # очищаем ожидание
+        if not hasattr(bot, "notify_messages"):
+            bot.notify_messages = {}
+        bot.notify_messages[cid] = {"chat_id": sent_short.chat.id, "message_id": sent_short.message_id}
+    except Exception as e:
+        print("Ошибка при отправке уведомления в группу ЖАЛОБЫ:", e)
+        traceback.print_exc()
+
+    # =========================
+    # Сброс состояний/блокировок
+    # =========================
     bot.solution_waiting.pop(user_id, None)
     bot.solution_locks[user_id] = False
+
+    # подтверждаем пользователю, что всё прошло
+    try:
+        await message.answer("✅ Решение добавлено и сообщение обновлено.")
+    except:
+        pass
 
 # ==========================
 # Сообщить родителю о решении — обновление сообщения
