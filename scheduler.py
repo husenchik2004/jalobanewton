@@ -2,6 +2,7 @@ import asyncio
 from datetime import datetime, timedelta, time
 from google_sheets import GoogleSheetsClient
 from reports import send_reports
+from utils import uz_time
 import traceback
 
 # ================================
@@ -51,7 +52,7 @@ async def _run_check_pending_calls_periodically(bot):
                 await asyncio.sleep(600)
                 continue
 
-            now = datetime.now()
+            now = uz_time()
             for _, row in df.iterrows():
                 try:
                     status = str(row.get(status_col, "")).strip().lower()
@@ -107,7 +108,7 @@ async def _run_weekly_report_task(bot):
 
     while True:
         try:
-            now = datetime.now()
+            now = uz_time()
             # до следующего понедельника 09:00
             days_ahead = (0 - now.weekday() + 7) % 7
             if days_ahead == 0 and now.time() >= time(hour=9):
@@ -139,7 +140,7 @@ async def _run_monthly_report_task(bot):
 
     while True:
         try:
-            now = datetime.now()
+            now = uz_time()
             # Находим первое число следующего месяца 09:00
             year, month = now.year, now.month
             if month == 12:

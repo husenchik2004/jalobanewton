@@ -1,5 +1,16 @@
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
+
+
+# ============================
+# ⏰ Узбекистанское время (UTC+5)
+# ============================
+def uz_time() -> datetime:
+    """
+    Текущее время Узбекистана как naive datetime.
+    Используется ВСЮДУ в боте, чтобы не зависеть от часового пояса сервера (Railway = UTC).
+    """
+    return datetime.utcnow() + timedelta(hours=5)
 
 
 # ============================
@@ -37,7 +48,7 @@ def generate_complaint_id(prefix: str = "J") -> str:
     Создаёт уникальный ID жалобы вида J-250108143501.
     Можно задать префикс (например, "A" для другой таблицы).
     """
-    return f"{prefix}-{datetime.now().strftime('%y%m%d%H%M%S')}"
+    return f"{prefix}-{uz_time().strftime('%y%m%d%H%M%S')}"
 
 
 # ============================
@@ -51,9 +62,9 @@ def is_allowed_user(user_id: int, allowed_users: list[int]) -> bool:
 
 
 # ============================
-# ⏰ Форматирование даты и времени
+# 🕒 Форматирование даты и времени
 # ============================
 def format_time(ts: datetime | None = None) -> str:
-    """Возвращает текущее время в формате 'дд.мм.гггг чч:мм'"""
-    ts = ts or datetime.now()
+    """Возвращает время в формате 'дд.мм.гггг чч:мм' (по умолчанию — текущее UZ)."""
+    ts = ts or uz_time()
     return ts.strftime("%d.%m.%Y %H:%M")

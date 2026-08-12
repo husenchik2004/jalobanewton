@@ -1,7 +1,7 @@
 # handlers/complaints.py
 import asyncio
 from aiogram import Router, types, F
-from aiogram.filters import CommandStart
+from aiogram.filters import CommandStart, Filter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from google_sheets import GoogleSheetsClient
@@ -9,16 +9,24 @@ from aiogram.types import (
     InlineKeyboardMarkup, InlineKeyboardButton,
     ReplyKeyboardMarkup, KeyboardButton
 )
-from datetime import datetime
-from datetime import datetime, timedelta
-
-def uz_time():
-    return datetime.utcnow() + timedelta(hours=5)
-
+from utils import uz_time
 import re
 
 router = Router()
 from aiogram import Bot
+
+
+# ==========================
+# Фильтр: бот ждёт от пользователя текст решения.
+# Нужен, чтобы receive_solution не перехватывал вообще любой текст в боте.
+# ==========================
+class AwaitingSolutionFilter(Filter):
+    async def __call__(self, message: types.Message) -> bool:
+        user = message.from_user
+        if user is None:
+            return False
+        sw = getattr(message.bot, "solution_waiting", None)
+        return bool(sw and user.id in sw)
 
 # Инициализация глобальных контейнеров для блокировок и ожиданий
 def setup_bot_memory(bot: Bot):
@@ -677,13 +685,10 @@ async def add_solution(callback: types.CallbackQuery, state: FSMContext = None):
 # ==========================
 # Обработка текста решения — отправка в РЕШЕНИЯ и ЖАЛОБЫ
 # ==========================
-@router.message(F.text)
+@router.message(AwaitingSolutionFilter(), F.text)
 async def receive_solution(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
     bot = message.bot
-
-    if user_id not in bot.solution_waiting:
-        return
 
     cid = bot.solution_waiting[user_id]["cid"]
     solution_text = message.text.strip()
@@ -804,3 +809,16 @@ async def notify_parent(callback: types.CallbackQuery):
         await callback.answer("✅ Родителю сообщили. Жалоба закрыта.")
     except Exception as e:
         await callback.answer(f"⚠️ Ошибка при обновлении сообщения: {e}")
+
+
+# ==========================
+# Fallback в ЛС: любой непонятный текст — подсказка про меню.
+# Срабатывает только в приватных чатах и только если ни один хендлер выше не подошёл.
+# ==========================
+@router.message(F.text, F.chat.type == "private")
+async def fallback_private(message: types.Message):
+    await message.answer(
+        "🤖 Не понимаю это сообщение. Воспользуйтесь кнопками меню 👇\n"
+        "Если меню пропало — нажмите /start.",
+        reply_markup=main_menu_kb()
+    )

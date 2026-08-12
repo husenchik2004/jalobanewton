@@ -2,16 +2,32 @@ import gspread
 import pandas as pd
 from google.oauth2.service_account import Credentials
 from datetime import datetime
+
+# Кэш экземпляров по (service_file, sheet_id) — чтобы не переоткрывать
+# подключение и не запускать ensure_headers на каждом действии.
+_instances = {}
+
+
 class GoogleSheetsClient:
+    def __new__(cls, service_file: str, sheet_id: str):
+        key = (service_file, sheet_id)
+        if key not in _instances:
+            _instances[key] = super().__new__(cls)
+        return _instances[key]
+
     def __init__(self, service_file: str, sheet_id: str):
+        # синглтон: инициализируем только один раз
+        if getattr(self, "_ready", False):
+            return
         """Подключение к Google Sheets"""
         scopes = ["https://www.googleapis.com/auth/spreadsheets"]
         creds = Credentials.from_service_account_file(service_file, scopes=scopes)
         self.client = gspread.authorize(creds)
         self.sheet = self.client.open_by_key(sheet_id).worksheet("Complaints")
 
-        # ✅ Проверяем заголовки при запуске
+        # ✅ Проверяем заголовки один раз за всё время работы процесса
         self.ensure_headers()
+        self._ready = True
 
     # ======================================================
     # ✅ Проверка и выравнивание заголовков

@@ -1,0 +1,6 @@
+# Файл для mise/Railpack на Railway.
+# Новые версии mise (2026.8.3+) проверяют GitHub-аттестации у Python 3.11.9
+# и сборка падает с "No GitHub artifact attestations found for python@3.11.9".
+# Этим отключаем проверку — сборка проходит.
+[settings]
+python.github_attestations = false

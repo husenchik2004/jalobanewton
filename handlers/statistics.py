@@ -2,6 +2,7 @@ import pandas as pd
 from aiogram import Router, types, F
 from google_sheets import GoogleSheetsClient
 from datetime import datetime
+from utils import uz_time
 
 router = Router()
 
@@ -229,7 +230,7 @@ async def stats_by_date(callback: types.CallbackQuery):
         return
 
     df["Дата"] = pd.to_datetime(df["Дата"], errors="coerce")
-    last_7 = df[df["Дата"] >= datetime.now() - pd.Timedelta(days=7)]
+    last_7 = df[df["Дата"] >= uz_time() - pd.Timedelta(days=7)]
 
     total = len(last_7)
     waiting = (last_7["Статус"] == "Ожидает обзвона").sum()
