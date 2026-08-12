@@ -23,7 +23,7 @@ if not BOT_TOKEN:
     BOT_TOKEN = "8383092549:AAE3UGGknaeylE-bd9RxVuTsFc2bIWPVQiE"
     print("⚠️ ВНИМАНИЕ: BOT_TOKEN берётся из кода! Задайте env BOT_TOKEN и перевыпустите токен в BotFather.")
 
-# Пароль для входа сотрудников (fail-closed: если пусто — пускает только ADMINS)
+# Пароль для входа сотрудников (если пусто — бот ОТКРЫТ для всех, проверка отключена)
 ACCESS_PASSWORD = os.getenv("ACCESS_PASSWORD", "")
 
 # Админы: из env ADMINS ("id1,id2") + базовые владельцы
@@ -159,6 +159,18 @@ async def main():
         start_scheduler(bot)
     except Exception as e:
         logging.warning(f"⚠️ Планировщик не запущен: {e}")
+
+    # ---- Диагностика авторизации (видно в логах Railway) ----
+    _pw_seen = "ДА" if os.getenv("ACCESS_PASSWORD") else "НЕТ"
+    print("=" * 50)
+    print(f"🔐 ACCESS_PASSWORD виден процессу: {_pw_seen}")
+    print(f"🔐 Авторизация активна (enabled): {auth.enabled}")
+    print(f"👥 Админов: {len(auth.admins)} | Уже авторизовано: {len(auth._authorized)}")
+    if not auth.enabled:
+        print("⚠️ ВНИМАНИЕ: бот ОТКРЫТ — ACCESS_PASSWORD не доходит до процесса!")
+        print("⚠️ Проверьте в Railway → Variables: имя точно ACCESS_PASSWORD,")
+        print("⚠️ значение не пустое, и стоит в ТОМ ЖЕ environment, откуда деплоится.")
+    print("=" * 50)
 
     print("🚀 Бот запущен и готов к работе!")
     await dp.start_polling(bot)
