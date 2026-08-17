@@ -1,5 +1,6 @@
 # handlers/complaints.py
 import asyncio
+import time
 from aiogram import Router, types, F
 from aiogram.filters import CommandStart, Filter
 from aiogram.fsm.context import FSMContext
@@ -19,13 +20,41 @@ from aiogram import Bot
 # ==========================
 # Фильтр: бот ждёт от пользователя текст решения.
 # Нужен, чтобы receive_solution не перехватывал вообще любой текст в боте.
+#
+# 🔧 ФИКС БАГА «все решения пишутся в одну жалобу»:
+# раньше ожидание решения НИКОГДА не снималось после первой записи — и все
+# последующие сообщения пользователя улетали в ту же старую жалобу.
+# Теперь у ожидания есть срок жизни (SOLUTION_WAIT_TIMEOUT), и оно снимается
+# сразу после первой же успешной записи решения (см. receive_solution).
 # ==========================
+SOLUTION_WAIT_TIMEOUT = 15 * 60  # секунд на ввод текста решения
+
+
+def _drop_stale_solution_wait(bot, user_id: int) -> bool:
+    """Снимает протухшее ожидание решения. True — если было протухшее."""
+    sw = getattr(bot, "solution_waiting", None)
+    if not sw or user_id not in sw:
+        return False
+    entry = sw[user_id]
+    ts = entry.get("ts", 0) if isinstance(entry, dict) else 0
+    if ts and time.time() - ts > SOLUTION_WAIT_TIMEOUT:
+        sw.pop(user_id, None)
+        locks = getattr(bot, "solution_locks", None)
+        if locks is not None:
+            locks[user_id] = False
+        return True
+    return False
+
+
 class AwaitingSolutionFilter(Filter):
     async def __call__(self, message: types.Message) -> bool:
         user = message.from_user
         if user is None:
             return False
-        sw = getattr(message.bot, "solution_waiting", None)
+        bot = message.bot
+        # протухшее ожидание вычищаем и не матчимся
+        _drop_stale_solution_wait(bot, user.id)
+        sw = getattr(bot, "solution_waiting", None)
         return bool(sw and user.id in sw)
 
 # Инициализация глобальных контейнеров для блокировок и ожиданий
@@ -657,6 +686,9 @@ async def add_solution(callback: types.CallbackQuery, state: FSMContext = None):
     if not hasattr(callback.bot, "solution_locks"):
         callback.bot.solution_locks = {}
 
+    # 🔧 чистим протухшее ожидание (15 мин не вводили текст — освобождаем)
+    _drop_stale_solution_wait(callback.bot, user_id)
+
     # 🚫 Если пользователь уже нажал кнопку и бот ждет от него текст — игнорируем
     if callback.bot.solution_locks.get(user_id):
         await callback.answer("⏳ Вы уже добавляете решение. Завершите ввод или подождите.", show_alert=True)
@@ -668,8 +700,8 @@ async def add_solution(callback: types.CallbackQuery, state: FSMContext = None):
     # ✉️ Просим текст решения
     await callback.message.answer(f"✍️ Введите текст решения по жалобе ID {cid}:")
 
-    # 🧠 Сохраняем в состояние, кого ждем
-    callback.bot.solution_waiting[user_id] = {"cid": cid}
+    # 🧠 Сохраняем в состояние, кого ждем (+ метка времени для авто-очистки)
+    callback.bot.solution_waiting[user_id] = {"cid": cid, "ts": time.time()}
 
     # ❌ Удаляем inline-кнопку "Добавить решение", чтобы её нельзя было нажать повторно
     try:
@@ -765,13 +797,23 @@ async def receive_solution(message: types.Message, state: FSMContext):
     notify_button = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📨 Сообщили родителю о решении!", callback_data=f"notify_parent:{cid}")]
     ])
-    
-    group_complaints = bot.config["GROUP_COMPLAINTS_ID"]
-    sent_complaint = await bot.send_message(group_complaints, msg_text_short, parse_mode="HTML", reply_markup=notify_button)
 
-    if not hasattr(bot, "notify_messages"):
-        bot.notify_messages = {}
-    bot.notify_messages[cid] = {"chat_id": group_complaints, "message_id": sent_complaint.message_id}
+    group_complaints = bot.config["GROUP_COMPLAINTS_ID"]
+
+    # ✅ КЛЮЧЕВЫЙ ФИКС: снимаем ожидание и блокировку СРАЗУ после записи.
+    # Раньше они не снимались никогда — из-за этого все последующие сообщения
+    # пользователя записывались в ту же самую жалобу и «рассылались» по группам.
+    try:
+        sent_complaint = await bot.send_message(group_complaints, msg_text_short, parse_mode="HTML", reply_markup=notify_button)
+        if not hasattr(bot, "notify_messages"):
+            bot.notify_messages = {}
+        bot.notify_messages[cid] = {"chat_id": group_complaints, "message_id": sent_complaint.message_id}
+        await message.answer(f"✅ Решение по жалобе {cid} сохранено.")
+    except Exception as e:
+        await message.answer(f"⚠️ Ошибка при отправке решения в группы: {e}")
+    finally:
+        bot.solution_waiting.pop(user_id, None)
+        bot.solution_locks[user_id] = False
 
 
 # ==========================

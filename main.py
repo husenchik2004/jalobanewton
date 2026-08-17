@@ -18,10 +18,11 @@ from auth import AuthManager, AuthMiddleware
 # ======================================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 if not BOT_TOKEN:
-    # Временный fallback, чтобы бот не падал, пока вы не зададите env на Railway.
-    # ВАЖНО: задайте BOT_TOKEN в Variables и перевыпустите токен в @BotFather (Revoke).
-    BOT_TOKEN = "8383092549:AAE3UGGknaeylE-bd9RxVuTsFc2bIWPVQiE"
-    print("⚠️ ВНИМАНИЕ: BOT_TOKEN берётся из кода! Задайте env BOT_TOKEN и перевыпустите токен в BotFather.")
+    raise RuntimeError(
+        "❌ BOT_TOKEN не задан! Устаревший токен удалён из кода из соображений безопасности. "
+        "Получите новый токен в @BotFather (/revoke) и добавьте переменную BOT_TOKEN "
+        "в Railway → Variables, затем задеплойте."
+    )
 
 # Пароль для входа сотрудников (если пусто — бот ОТКРЫТ для всех, проверка отключена)
 ACCESS_PASSWORD = os.getenv("ACCESS_PASSWORD", "")
